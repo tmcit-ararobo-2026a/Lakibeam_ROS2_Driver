@@ -41,7 +41,7 @@ jobs:
 
           source /opt/ros/humble/setup.bash
 
-          DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y git ccache curl
+          DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y git ccache curl libcurl4-openssl-dev
 
           export CCACHE_DIR=${{ github.workspace }}/.ccache
           export PATH="/usr/lib/ccache:$PATH"
