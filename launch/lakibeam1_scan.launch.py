@@ -58,7 +58,7 @@ def generate_launch_description():
 
     declare_frame_id_cmd = DeclareLaunchArgument(
     'frame_id',
-    default_value='lakibeam_frame',
+    default_value='laki_frame',
     )
     declare_output_topic0_cmd = DeclareLaunchArgument(
     'output_topic0',
