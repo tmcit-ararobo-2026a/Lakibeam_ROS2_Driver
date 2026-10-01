@@ -58,7 +58,7 @@ def generate_launch_description():
 
     declare_frame_id_cmd = DeclareLaunchArgument(
     'frame_id',
-    default_value='laser',
+    default_value='lakibeam_frame',
     )
     declare_output_topic0_cmd = DeclareLaunchArgument(
     'output_topic0',
@@ -74,7 +74,7 @@ def generate_launch_description():
     )
     declare_hostip_cmd = DeclareLaunchArgument(
     'hostip',
-    default_value='0.0.0.0',
+    default_value='192.168.3.1',
     )
     declare_port0_cmd = DeclareLaunchArgument(
     'port0',
@@ -110,7 +110,7 @@ def generate_launch_description():
     )
     declare_sensorip_cmd = DeclareLaunchArgument(
     'sensorip',
-    default_value='192.168.198.2',
+    default_value='192.168.3.4',
     )
 
     richbeam_lidar_node0 = Node(
