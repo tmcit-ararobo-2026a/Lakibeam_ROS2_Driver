@@ -100,7 +100,7 @@ protected:
         sockfd = socket(AF_INET, SOCK_DGRAM, 0);
         if(sockfd == -1)
         {
-            RCLCPP_INFO(get_logger(),"Failed to create socket");
+            RCLCPP_ERROR(get_logger(),"Failed to create socket");
             return -1;
         }
 
@@ -111,7 +111,7 @@ protected:
 
         if(bind(sockfd, (struct sockaddr*)&ser_addr, sizeof(ser_addr)) < 0)
         {
-            RCLCPP_INFO(get_logger(),"Socket bind error!");
+            RCLCPP_ERROR(get_logger(),"Socket bind error!");
             return -1;
         }
         return 0;
@@ -226,7 +226,7 @@ protected:
 				}
 
 				scan_pub->publish(scan);
-				RCLCPP_INFO(get_logger(), "New topic %s published, total data points: %d", output_topic.c_str(), num_readings);
+				// RCLCPP_INFO(get_logger(), "New topic %s published, total data points: %d", output_topic.c_str(), num_readings);
 				scan_vec.clear();
 				scan_vec_ready = 0;
 			}
