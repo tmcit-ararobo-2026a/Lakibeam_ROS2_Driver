@@ -15,6 +15,9 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
+#include <cmath>
+#include <limits>
 #include <iostream>
 #include <math.h>
 #include "../include/data_type.h"
@@ -27,6 +30,8 @@ class lakibeam1_scan : public rclcpp::Node
 public:
 	lakibeam1_scan():Node("laser_scan_publisher")
 	{
+		scan_begin = this->now();
+		scan_end = scan_begin;
 		declare_parameters();
 		get_parameters();
 		scan_pub = create_publisher<sensor_msgs::msg::LaserScan>(output_topic, 1000);
@@ -114,55 +119,77 @@ protected:
             RCLCPP_ERROR(get_logger(),"Socket bind error!");
             return -1;
         }
+
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 500000;
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
         return 0;
     };
 	void scan_publish()
 	{
-		double inf = std::numeric_limits<double>::infinity();
+		float inf = std::numeric_limits<float>::infinity();
 		RCLCPP_INFO(get_logger(),"scan_publish");
 		// rclcpp::sleep_for(std::chrono::milliseconds(2000));
 		// get_telemetry_data(sensorip);
+		rclcpp::Time pkt_stamp = this->now();
 		while (rclcpp::ok())
 		{
 			if(scan_vec_ready == 0)
 			{
-				while(1)
+				while(rclcpp::ok())
 				{
 					if(j == 12)
 					{
 						unsigned int len = sizeof(clent_addr);
-						recvfrom(sockfd, &MSOP_Data, sizeof(MSOP_Data), 0, (struct sockaddr*)&clent_addr, &len);
-						if(MSOP_Data.BlockID[0].Azimuth == 0)
+						ssize_t recv_len = recvfrom(sockfd, &MSOP_Data, sizeof(MSOP_Data), 0, (struct sockaddr*)&clent_addr, &len);
+						if(recv_len <= 0)
 						{
-							scan_end = scan_begin;
-							scan_begin = rclcpp::Clock().now();
-						}			
+							if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+							{
+								continue;
+							}
+							break;
+						}
+						pkt_stamp = this->now();
 						if((MSOP_Data.BlockID[1].Azimuth - MSOP_Data.BlockID[0].Azimuth) > 0)
 						{
-							resolution = (MSOP_Data.BlockID[1].Azimuth - MSOP_Data.BlockID[0].Azimuth) / 16;
+							int diff = (MSOP_Data.BlockID[1].Azimuth - MSOP_Data.BlockID[0].Azimuth) / 16;
+							if(diff > 0 && diff <= 100)
+							{
+								resolution = diff;
+							}
 						}
 						j = 0;
+						i = 0;
 					}
 
 					for(;j < 12; j++)
 					{
-						for(i = 0; i < 16; i++)
+						for(; i < 16; i++)
 						{
 							bm_response_scan_t response_ptr;
 							response_ptr.angle = (MSOP_Data.BlockID[j].Azimuth + (resolution * i));
 							if(MSOP_Data.BlockID[j].DataFlag == 0xEEFF)
 							{
-								if(response_ptr.angle == 0)
+								if(!scan_vec.empty() && (scan_vec_ready == 0))
 								{
-									if(!scan_vec.empty() & (scan_vec_ready == 0))
+									const uint16_t prev_angle = scan_vec.back().angle;
+									const bool wrapped =
+										(response_ptr.angle == 0 && prev_angle > 0) ||
+										(prev_angle > 18000 && response_ptr.angle < 18000) ||
+										(scan_vec.size() >= 1440);
+									if(wrapped)
 									{
+										scan_end = pkt_stamp;
 										scan_vec_ready = 1;
-										if(scan_vec.size() < 1200)
-										{
-											j = 12;
-										}
 										break;
 									}
+								}
+								if(scan_vec.empty())
+								{
+									scan_begin = pkt_stamp;
 								}
 								response_ptr.dist = MSOP_Data.BlockID[j].Result[i].Dist_1;
 								response_ptr.rssi = MSOP_Data.BlockID[j].Result[i].RSSI_1;
@@ -173,6 +200,7 @@ protected:
 						{
 							break;
 						}
+						i = 0;
 					}
 					if(scan_vec_ready == 1)
 					{
@@ -185,43 +213,38 @@ protected:
 			if(scan_vec_ready == 1)
 			{
 				sensor_msgs::msg::LaserScan scan;
-				uint16_t num_readings;
-				float duration = (scan_begin - scan_end).seconds();
+				const int safe_res = (resolution > 0 && resolution <= 100) ? resolution : 25;
+				const uint16_t num_readings = static_cast<uint16_t>(36000 / safe_res);
+				float duration = static_cast<float>((scan_end - scan_begin).seconds());
+				if(!std::isfinite(duration) || duration < 0.015f || duration > 0.10f)
+				{
+					duration = 1.0f / 30.0f;
+				}
 
-				num_readings = scan_vec.size();
 				scan.header.stamp = scan_begin;
 				scan.header.frame_id = frame_id;
 				scan.angle_min = DEG2RAD(-180 + angle_offset);
 				scan.angle_max = DEG2RAD(180 + angle_offset);
 				scan.angle_increment = 2.0 * M_PI / num_readings;
 				scan.scan_time = duration;
-				scan.time_increment = duration/(float)num_readings/2;
+				scan.time_increment = (num_readings > 1) ? (duration / static_cast<float>(num_readings - 1)) : 0.0f;
 				scan.range_min = 0.0;
 				scan.range_max = 100.0;
-				scan.ranges.resize(num_readings);
-				scan.intensities.resize(num_readings);
+				scan.ranges.assign(num_readings, inf);
+				scan.intensities.assign(num_readings, 0.0f);
 
-				for(int i = 0;i < num_readings; i++)
+				for(size_t idx = 0; idx < scan_vec.size(); idx++)
 				{
-					if (!inverted)
+					const int bin = static_cast<int>(scan_vec[idx].angle % 36000) / safe_res;
+					if(bin < 0 || bin >= static_cast<int>(num_readings))
 					{
-						scan.ranges[i] = (float)scan_vec[i].dist / 1000;
-						scan.intensities[i] = scan_vec[i].rssi;
-						if(scan.ranges[i] == 0)
-						{
-							scan.ranges[i] = inf;
-							scan.intensities[i] = 0;
-						}
+						continue;
 					}
-					else
+					const int target_idx = inverted ? (static_cast<int>(num_readings) - 1 - bin) : bin;
+					if(scan_vec[idx].dist > 0)
 					{
-						scan.ranges[num_readings - i - 1] = (float)scan_vec[i].dist / 1000;
-						scan.intensities[num_readings - i - 1] = scan_vec[i].rssi;
-						if(scan.ranges[num_readings - i - 1] == 0)
-						{
-							scan.ranges[num_readings - i - 1] = inf;
-							scan.intensities[num_readings - i - 1] = 0;
-						}
+						scan.ranges[target_idx] = static_cast<float>(scan_vec[idx].dist) / 1000.0f;
+						scan.intensities[target_idx] = scan_vec[idx].rssi;
 					}
 				}
 
