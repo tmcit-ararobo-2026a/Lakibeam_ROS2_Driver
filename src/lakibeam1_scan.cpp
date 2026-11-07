@@ -176,11 +176,7 @@ protected:
 								if(!scan_vec.empty() && (scan_vec_ready == 0))
 								{
 									const uint16_t prev_angle = scan_vec.back().angle;
-									const bool wrapped =
-										(response_ptr.angle == 0 && prev_angle > 0) ||
-										(prev_angle > 18000 && response_ptr.angle < 18000) ||
-										(scan_vec.size() >= 1440);
-									if(wrapped)
+									if(response_ptr.angle < prev_angle)
 									{
 										scan_end = pkt_stamp;
 										scan_vec_ready = 1;
@@ -216,9 +212,10 @@ protected:
 				const int safe_res = (resolution > 0 && resolution <= 100) ? resolution : 25;
 				const uint16_t num_readings = static_cast<uint16_t>(36000 / safe_res);
 				float duration = static_cast<float>((scan_end - scan_begin).seconds());
-				if(!std::isfinite(duration) || duration < 0.015f || duration > 0.10f)
+				if(!std::isfinite(duration) || duration <= 0.0f)
 				{
-					duration = 1.0f / 30.0f;
+					const int freq = std::atoi(scanfreq.c_str());
+					duration = (freq > 0) ? (1.0f / static_cast<float>(freq)) : (1.0f / 30.0f);
 				}
 
 				scan.header.stamp = scan_begin;
